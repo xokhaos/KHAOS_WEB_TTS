@@ -247,9 +247,22 @@
             }
         });
 
+        voicemakerApiKeyInput.addEventListener('input', () => {
+            localStorage.setItem('vak', voicemakerApiKeyInput.value);
+        });
+        voicemakerApiKeyInput.addEventListener('change', () => {
+            localStorage.setItem('vak', voicemakerApiKeyInput.value);
+        });
+
         document.addEventListener("DOMContentLoaded", function() {
+            
+
             initBtn.click();
             //voiceSelect
+
+            //if localStorage has voicemakerApiKey, set it to the input and pull voices
+            const savedKey = localStorage.getItem('vak');
+            if (savedKey) voicemakerApiKeyInput.value = savedKey;
         });
 
         async function speakText(text) {
