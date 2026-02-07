@@ -1,0 +1,293 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KHAOS WEB TTS - Integrated</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e1e1e;
+        }
+
+        .container {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            margin-top: 0;
+            color: #e0e0e0;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #b0b0b0;
+        }
+
+        select, input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #404040;
+            border-radius: 5px;
+            font-size: 14px;
+            background: #3a3a3a;
+            color: #e0e0e0;
+            margin-bottom: 10px;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin-bottom: 10px;
+        }
+
+        #startStopBtn {
+            background: #5a9f5e;
+            color: #ffffff;
+        }
+
+        #startStopBtn:hover {
+            background: #6bb96f;
+        }
+
+        #startStopBtn.active {
+            background: #d46a6a;
+        }
+
+        #initBtn {
+            background: #0078d4;
+            color: white;
+        }
+
+        #initBtn.success {
+            background: #28a745;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            background: #3a3a3a;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #b0b0b0;
+        }
+
+        .warning {
+            background: #3d3526;
+            border: 1px solid #6b5d3f;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #d4bb88;
+        }
+
+        .console {
+            margin-top: 20px;
+            padding: 15px;
+            font-family: monospace;
+            background: #3a3a3a;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #b0b0b0;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>KHAOS WEB TTS</h1>
+        
+        <div class="warning">
+            Input device will be the default input device of the system! or change it when it asks for access.
+        </div>
+        <div class="warning">
+            1. Unlock Hardware -> 2. Select Output -> 3. Start Voice
+        </div>
+
+        <div class="control-group">
+            <button id="initBtn">Unlock Audio Devices</button>
+
+            <label for="voicemaker_apikey">VoiceMaker API Key:</label>
+            <input type="text" id="voicemaker_apikey" placeholder="VoiceMaker API Key here..." />
+
+            <label for="deviceSelect">Route TTS Output To:</label>
+            <select id="deviceSelect" disabled>
+                <option>Unlock hardware first...</option>
+            </select>
+        </div>
+        
+        <button id="startStopBtn">Step 2: Start Voice Recognition</button>
+        
+        <div class="status" id="status">Ready</div>
+        <div class="console" id="console"></div>
+    </div>
+
+    <audio id="audioBridge"></audio>
+
+    <script>
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        
+        const voicemakerApiKeyInput = document.getElementById('voicemaker_apikey');
+        const startStopBtn = document.getElementById('startStopBtn');
+        const initBtn = document.getElementById('initBtn');
+        const deviceSelect = document.getElementById('deviceSelect');
+        const statusDiv = document.getElementById('status');
+        const consoleDiv = document.getElementById('console');
+        const audioBridge = document.getElementById('audioBridge');
+        
+        let isRecognizing = false;
+
+        function logToConsole(message) {
+            if (typeof message === 'object') {
+                message = JSON.stringify(message, null, 2);
+            }
+            consoleDiv.textContent += `> ${message}\n`;
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        }
+
+        // --- HARDWARE INITIALIZATION ---
+        initBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                deviceSelect.innerHTML = '';
+                
+                const outputs = devices.filter(d => d.kind === 'audiooutput');
+                outputs.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Output ${device.deviceId.substring(0, 5)}`;
+                    deviceSelect.appendChild(option);
+                });
+
+                deviceSelect.disabled = false;
+                initBtn.classList.add('success');
+                initBtn.textContent = "Hardware Unlocked ✓";
+                logToConsole("Audio output devices loaded.");
+            } catch (err) {
+                logToConsole("Error unlocking hardware: " + err.message);
+                alert("Permissions denied.");
+            }
+        });
+
+        // --- TTS LOGIC ---
+        async function speakText(text) {
+            const targetDeviceId = deviceSelect.value;
+            statusDiv.textContent = "Generating TTS...";
+            
+            try {
+                const payload = {
+                    "Engine": "neural",
+                    "VoiceId": "ai3-en-US-Madison",
+                    "LanguageCode": "en-US",
+                    "Text": text,
+                    "OutputFormat": "mp3",
+                    "SampleRate": "48000",
+                    "Effect": "default",
+                    "MasterSpeed": "0",
+                    "MasterVolume": "0",
+                    "MasterPitch": "0"
+                };
+
+                const response = await fetch('https://developer.voicemaker.in/voice/api', {
+                    method: 'POST',
+                    headers: {
+                        "Authorization": `Bearer ${voicemakerApiKeyInput.value}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const resData = await response.json();
+                if (!resData.success) throw new Error(resData.error || "API Error");
+
+                // Route to selected device
+                if (audioBridge.setSinkId) {
+                    await audioBridge.setSinkId(targetDeviceId);
+                }
+
+                audioBridge.src = resData.path;
+                await audioBridge.play();
+                logToConsole(`Playing TTS: "${text}"`);
+                
+                audioBridge.onended = () => {
+                    statusDiv.textContent = "🎤 Listening...";
+                };
+
+            } catch (err) {
+                logToConsole("TTS Error: " + err.message);
+            }
+        }
+
+        // --- RECOGNITION HANDLERS ---
+        startStopBtn.addEventListener('click', () => {
+            if (!isRecognizing) {
+                recognition.start();
+            } else {
+                recognition.stop();
+            }
+        });
+        
+        recognition.onstart = () => {
+            isRecognizing = true;
+            startStopBtn.textContent = 'Stop Recognition';
+            startStopBtn.classList.add('active');
+            statusDiv.textContent = '🎤 Listening...';
+            logToConsole('Recognition started');
+        };
+        
+        recognition.onend = () => {
+            isRecognizing = false;
+            startStopBtn.textContent = 'Start Recognition';
+            startStopBtn.classList.remove('active');
+            statusDiv.textContent = 'Stopped';
+            logToConsole('Recognition stopped');
+        };
+        
+        recognition.onresult = (event) => {
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                const isFinal = event.results[i].isFinal;
+                
+                if (isFinal) {
+                    logToConsole(`Final transcript: ${transcript}`);
+                    // Trigger the TTS automatically on final result
+                    speakText(transcript);
+                }
+            }
+        };
+        
+        recognition.onerror = (event) => {
+            logToConsole('Recognition error: ' + event.error);
+        };
+    </script>
+</body>
+</html>
