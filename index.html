@@ -121,23 +121,25 @@
         <div class="warning">
             Input device will be the default input device of the system! or change it when it asks for access.
         </div>
-        <div class="warning">
-            1. Unlock Hardware -> 2. Select Output -> 3. Start Voice
-        </div>
 
         <div class="control-group">
             <button id="initBtn">Unlock Audio Devices</button>
-
-            <label for="voicemaker_apikey">VoiceMaker API Key:</label>
-            <input type="text" id="voicemaker_apikey" placeholder="VoiceMaker API Key here..." />
 
             <label for="deviceSelect">Route TTS Output To:</label>
             <select id="deviceSelect" disabled>
                 <option>Unlock hardware first...</option>
             </select>
+
+            <label for="voicemaker_apikey">VoiceMaker API Key:</label>
+            <input type="text" id="voicemaker_apikey" placeholder="VoiceMaker API Key here..." />
+            <button id="pullVoices">Pull Voice Options</button>
+            <label for="voiceSelect">Voicemaker Voice:</label>
+            <select id="voiceSelect" disabled>
+                <option>...</option>
+            </select>
         </div>
         
-        <button id="startStopBtn">Step 2: Start Voice Recognition</button>
+        <button id="startStopBtn">Start TTS</button>
         
         <div class="status" id="status">Ready</div>
         <div class="console" id="console"></div>
@@ -156,7 +158,9 @@
         const voicemakerApiKeyInput = document.getElementById('voicemaker_apikey');
         const startStopBtn = document.getElementById('startStopBtn');
         const initBtn = document.getElementById('initBtn');
+        const pullVoicesBtn = document.getElementById('pullVoices');
         const deviceSelect = document.getElementById('deviceSelect');
+        const voiceSelect = document.getElementById('voiceSelect');
         const statusDiv = document.getElementById('status');
         const consoleDiv = document.getElementById('console');
         const audioBridge = document.getElementById('audioBridge');
@@ -191,6 +195,8 @@
                 deviceSelect.disabled = false;
                 initBtn.classList.add('success');
                 initBtn.textContent = "Hardware Unlocked ✓";
+                initBtn.disabled = true;
+                initBtn.style.display = 'none';
                 logToConsole("Audio output devices loaded.");
             } catch (err) {
                 logToConsole("Error unlocking hardware: " + err.message);
@@ -198,7 +204,54 @@
             }
         });
 
-        // --- TTS LOGIC ---
+        pullVoicesBtn.addEventListener('click', async () => {
+            statusDiv.textContent = "Fetching voices...";
+            try {
+                const payload = { "LanguageCode": "en-US" }; // Adjust as needed
+                const response = await fetch('https://developer.voicemaker.in/api/v1/voice/list', {
+                    method: 'POST',
+                    headers: {
+                        "Authorization": `Bearer ${voicemakerApiKeyInput.value}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const resData = await response.json();
+                if (!resData.success) throw new Error(resData.error || "API Error");
+
+                //console.log(resData.data.voices_list);
+
+                //remove all entries from resData.data.voices_list
+                // where element.Language does not include "en-"
+                let voiceList = resData.data.voices_list.filter(voice => voice.Language?.includes("en-"));
+                console.log(voiceList);
+
+                voiceSelect.innerHTML = '';
+                voiceList.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.VoiceId;
+                    option.text = `${voice.VoiceId} (${voice.Language})`;
+                    voiceSelect.appendChild(option);
+                });
+                voiceSelect.disabled = false;
+                statusDiv.textContent = "Voices loaded.";
+                //lets pick a default. lets find "ai3-en-US-Madison"
+                const defaultVoice = voiceList.find(v => v.VoiceId === "ai3-en-US-Madison");
+                if (defaultVoice) {
+                    voiceSelect.value = defaultVoice.VoiceId;
+                }
+            } catch (err) {
+                logToConsole("Error fetching voices: " + err.message);
+                statusDiv.textContent = "Failed to load voices.";
+            }
+        });
+
+        document.addEventListener("DOMContentLoaded", function() {
+            initBtn.click();
+            //voiceSelect
+        });
+
         async function speakText(text) {
             const targetDeviceId = deviceSelect.value;
             statusDiv.textContent = "Generating TTS...";
@@ -206,13 +259,13 @@
             try {
                 const payload = {
                     "Engine": "neural",
-                    "VoiceId": "ai3-en-US-Madison",
+                    "VoiceId": voiceSelect.value,
                     "LanguageCode": "en-US",
                     "Text": text,
                     "OutputFormat": "mp3",
                     "SampleRate": "48000",
                     "Effect": "default",
-                    "MasterSpeed": "0",
+                    "MasterSpeed": "40",
                     "MasterVolume": "0",
                     "MasterPitch": "0"
                 };
@@ -247,29 +300,39 @@
             }
         }
 
+        recognition.onstart = () => {
+            isRecognizing = true;
+            startStopBtn.textContent = 'Stop TTS';
+            startStopBtn.classList.add('active');
+            statusDiv.textContent = '🎤 Listening...';
+            logToConsole('TTS started');
+        };
+
         // --- RECOGNITION HANDLERS ---
+        let manualStop = false; 
+
         startStopBtn.addEventListener('click', () => {
             if (!isRecognizing) {
+                manualStop = false; // Reset flag on start
                 recognition.start();
             } else {
+                manualStop = true;  // Set flag on manual stop
                 recognition.stop();
             }
         });
-        
-        recognition.onstart = () => {
-            isRecognizing = true;
-            startStopBtn.textContent = 'Stop Recognition';
-            startStopBtn.classList.add('active');
-            statusDiv.textContent = '🎤 Listening...';
-            logToConsole('Recognition started');
-        };
-        
+
         recognition.onend = () => {
             isRecognizing = false;
-            startStopBtn.textContent = 'Start Recognition';
-            startStopBtn.classList.remove('active');
-            statusDiv.textContent = 'Stopped';
-            logToConsole('Recognition stopped');
+            
+            if (!manualStop) {
+                logToConsole('Recognition interrupted. Restarting...');
+                recognition.start();
+            } else {
+                startStopBtn.textContent = 'Start TTS';
+                startStopBtn.classList.remove('active');
+                statusDiv.textContent = 'Stopped';
+                logToConsole('TTS stopped by user');
+            }
         };
         
         recognition.onresult = (event) => {
